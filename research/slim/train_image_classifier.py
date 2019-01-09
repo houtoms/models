@@ -391,6 +391,27 @@ def _get_variables_to_train():
     variables_to_train.extend(variables)
   return variables_to_train
 
+class LossScalingOptimizer(tf.train.Optimizer):
+    """An optimizer that scales loss and un-scales gradients."""
+
+    def __init__(self, optimizer,
+                 scale=None,
+                 name="LossScalingOptimizer",
+                 use_locking=False):
+        super(LossScalingOptimizer, self).__init__(
+            name=name, use_locking=use_locking)
+        self._optimizer=optimizer
+        self._scale = float(scale) if scale is not None else 1.0
+
+    def compute_gradients(self, loss, var_list=None, *args, **kwargs):
+        if self._scale != 1.0:
+            loss = tf.scalar_mul(self._scale, loss)
+        gradvar = self._optimizer.compute_gradients(loss, var_list, *args, **kwargs)
+        gradvar = [(tf.scalar_mul(1./self._scale, g), v) for g, v in gradvar]
+        return gradvar
+
+    def apply_gradients(self, *args, **kwargs):
+        return self._optimizer.apply_gradients(*args, **kwargs)
 
 def main(_):
   if not FLAGS.dataset_dir:
@@ -526,6 +547,7 @@ def main(_):
     with tf.device(deploy_config.optimizer_device()):
       learning_rate = _configure_learning_rate(dataset.num_samples, global_step)
       optimizer = _configure_optimizer(learning_rate)
+      optimizer = LossScalingOptimizer(optimizer, scale=128)
       summaries.add(tf.summary.scalar('learning_rate', learning_rate))
 
     if FLAGS.sync_replicas:
